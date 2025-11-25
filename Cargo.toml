@@ -71,10 +71,16 @@ critical-section = "1.2.0"
 static_cell      = "2.1.1"
 
 
+# cargo doesnt let us set release as the default profile
+# so we just make debug behave like release
 [profile.dev]
-# Rust debug is too slow.
-# For debug builds always builds with some optimization
-opt-level = "s"
+codegen-units    = 1     # LLVM can perform better optimizations using a single thread
+debug            = 2
+debug-assertions = false
+incremental      = false
+lto              = 'fat'
+opt-level        = 's'
+overflow-checks  = false
 
 [profile.release]
 codegen-units    = 1     # LLVM can perform better optimizations using a single thread
