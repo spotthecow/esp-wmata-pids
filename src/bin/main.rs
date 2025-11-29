@@ -6,7 +6,7 @@
     holding buffers for the duration of a data transfer."
 )]
 
-use defmt::{error, info};
+use defmt::{debug, error, info};
 use embassy_executor::{Spawner, task};
 use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
@@ -20,8 +20,8 @@ use esp_radio::{
     // ble::controller::BleConnector,
     wifi::{ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent},
 };
+use esp_wmata_pids::wmata::Client;
 use reqwless::client::HttpClient;
-use reqwless::request::{Method, RequestBuilder};
 use {esp_backtrace as _, esp_println as _};
 
 extern crate alloc;
@@ -78,7 +78,7 @@ async fn main(spawner: Spawner) -> ! {
     // info!("bluetooth stack intialized");
 
     let (wifi_controller, interfaces) =
-        esp_radio::wifi::new(&esp_radio_ctrl, peripherals.WIFI, Default::default())
+        esp_radio::wifi::new(esp_radio_ctrl, peripherals.WIFI, Default::default())
             .expect("Failed to initialize Wi-Fi controller");
     info!("wifi controller initialized");
 
@@ -115,33 +115,28 @@ async fn main(spawner: Spawner) -> ! {
     }
 
     let state = mk_static!(TcpClientState<1, 4096, 4096>, TcpClientState::<1, 4096, 4096>::new());
-    let tcp = TcpClient::new(stack, &state);
+    let tcp = TcpClient::new(stack, state);
     let dns = DnsSocket::new(stack);
     // let tls_rx = mk_static!([u8; 4096], [0u8; 4096]);
     // let tls_tx = mk_static!([u8; 4096], [0u8; 4096]);
     // let tls = TlsConfig::new(seed, tls_rx, tls_tx, TlsVerify::None);
 
-    let mut client = HttpClient::new(&tcp, &dns);
+    let reqwless = HttpClient::new(&tcp, &dns);
     let rx_buf = mk_static!([u8; 4096], [0u8; 4096]);
-    let _tx_buf = mk_static!([u8; 4096], [0u8; 4096]);
 
-    let headers = [("Api_key", api_key), ("User-Agent", "esp-wmata-pids")];
+    let mut client = Client::new(reqwless, rx_buf, api_key);
+    let trains = client
+        .next_trains(esp_wmata_pids::wmata::types::Station::K04)
+        .await;
 
-    let mut req = client
-        .request(
-            Method::GET,
-            "http://api.wmata.com/StationPrediction.svc/json/GetPrediction/B03",
-        )
-        .await
-        .expect("couldnt create request")
-        .headers(&headers);
-
-    let res = req.send(rx_buf).await.expect("couldnt send request");
-
-    let body = res.body();
-    let something = body.read_to_end().await.unwrap();
-    let text = core::str::from_utf8(something).unwrap();
-    info!("{}", text);
+    match trains {
+        Ok(trains) => {
+            for t in &trains {
+                info!("{:?}", t);
+            }
+        }
+        Err(e) => error!("{:?}", e),
+    }
 
     loop {
         Timer::after_micros(500).await;
@@ -154,17 +149,14 @@ async fn connection(
     ssid: &'static str,
     password: &'static str,
 ) {
-    info!("starting connection task");
-    info!("device capabilities: {:?}", controller.capabilities());
+    debug!("starting connection task");
+    debug!("device capabilities: {:?}", controller.capabilities());
 
     loop {
-        match esp_radio::wifi::sta_state() {
-            esp_radio::wifi::WifiStaState::Connected => {
-                // wait for disconnect
-                controller.wait_for_event(WifiEvent::StaDisconnected).await;
-                Timer::after_secs(5).await;
-            }
-            _ => {}
+        if esp_radio::wifi::sta_state() == esp_radio::wifi::WifiStaState::Connected {
+            // wait for disconnect
+            controller.wait_for_event(WifiEvent::StaDisconnected).await;
+            Timer::after_secs(5).await;
         }
 
         // set config
@@ -179,14 +171,14 @@ async fn connection(
                 .set_config(&client_config)
                 .expect("couldn't set wifi controller config");
 
-            info!("starting wifi");
+            debug!("starting wifi");
             controller
                 .start_async()
                 .await
                 .expect("couldn't start wifi controller");
             info!("wifi started");
 
-            info!("scanning...");
+            debug!("scanning...");
             let scan_config = ScanConfig::default().with_max(10);
             let access_points = controller
                 .scan_with_config_async(scan_config)
@@ -194,10 +186,10 @@ async fn connection(
                 .expect("error scanning wifi");
 
             for ap in access_points {
-                info!("{:?}", ap);
+                debug!("{:?}", ap);
             }
 
-            info!("About to connect...");
+            debug!("About to connect...");
 
             match controller.connect_async().await {
                 Ok(_) => info!("Wifi connected!"),
