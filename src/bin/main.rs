@@ -6,7 +6,7 @@
     holding buffers for the duration of a data transfer."
 )]
 
-use defmt::{debug, error, info};
+use defmt::{debug, error, info, trace};
 use embassy_executor::{Spawner, task};
 use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
@@ -21,10 +21,9 @@ use esp_radio::{
     wifi::{ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent},
 };
 use esp_wmata_pids::wmata::Client;
+use heapless::String;
 use reqwless::client::HttpClient;
 use {esp_backtrace as _, esp_println as _};
-
-extern crate alloc;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -117,29 +116,32 @@ async fn main(spawner: Spawner) -> ! {
     let state = mk_static!(TcpClientState<1, 4096, 4096>, TcpClientState::<1, 4096, 4096>::new());
     let tcp = TcpClient::new(stack, state);
     let dns = DnsSocket::new(stack);
-    // let tls_rx = mk_static!([u8; 4096], [0u8; 4096]);
-    // let tls_tx = mk_static!([u8; 4096], [0u8; 4096]);
-    // let tls = TlsConfig::new(seed, tls_rx, tls_tx, TlsVerify::None);
 
     let reqwless = HttpClient::new(&tcp, &dns);
     let rx_buf = mk_static!([u8; 4096], [0u8; 4096]);
-
     let mut client = Client::new(reqwless, rx_buf, api_key);
-    let trains = client
-        .next_trains(esp_wmata_pids::wmata::types::Station::K04)
-        .await;
-
-    match trains {
-        Ok(trains) => {
-            for t in &trains {
-                info!("{:?}", t);
-            }
-        }
-        Err(e) => error!("{:?}", e),
-    }
 
     loop {
-        Timer::after_micros(500).await;
+        let trains = client
+            .next_trains(esp_wmata_pids::wmata::types::Station::K04)
+            .await;
+
+        match trains {
+            Ok(trains) => {
+                info!("\n\nUpdate: ");
+
+                let mut format_str: String<48> = String::new();
+                for t in &trains {
+                    format_str.clear();
+                    t.write_debug_display(&mut format_str)
+                        .expect("couldn't write debug display");
+                    info!("{}", format_str);
+                }
+            }
+            Err(e) => error!("{:?}", e),
+        }
+
+        Timer::after_secs(10).await;
     }
 }
 
@@ -156,7 +158,7 @@ async fn connection(
         if esp_radio::wifi::sta_state() == esp_radio::wifi::WifiStaState::Connected {
             // wait for disconnect
             controller.wait_for_event(WifiEvent::StaDisconnected).await;
-            Timer::after_secs(5).await;
+            Timer::after_millis(500).await;
         }
 
         // set config
@@ -186,7 +188,7 @@ async fn connection(
                 .expect("error scanning wifi");
 
             for ap in access_points {
-                debug!("{:?}", ap);
+                trace!("{:?}", ap);
             }
 
             debug!("About to connect...");

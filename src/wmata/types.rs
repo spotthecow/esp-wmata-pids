@@ -1,9 +1,11 @@
+use core::fmt::Write;
 use heapless::String;
 use miniserde::{Deserialize, de::Visitor, make_place};
-extern crate alloc;
 
 #[derive(Deserialize, defmt::Format)]
 pub struct NextTrain {
+    #[serde(rename = "Car")]
+    pub cars: TrainCar,
     #[serde(rename = "Destination")]
     pub destination: StationName,
     #[serde(rename = "DestinationCode")]
@@ -18,6 +20,26 @@ pub struct NextTrain {
     pub location_name: StationName,
     #[serde(rename = "Min")]
     pub min: Eta,
+}
+
+impl NextTrain {
+    pub fn write_debug_display<const N: usize>(&self, buf: &mut String<N>) -> core::fmt::Result {
+        if let Some(line) = &self.line {
+            write!(buf, "[{}] ", line.code())?;
+        } else {
+            write!(buf, "[  ] ")?;
+        }
+
+        write!(
+            buf,
+            "({}) {} - {}",
+            self.cars.to_string(),
+            self.destination.0,
+            self.min.to_string()
+        )?;
+
+        Ok(())
+    }
 }
 
 #[derive(Deserialize)]
@@ -75,6 +97,39 @@ impl<'a> IntoIterator for &'a NextTrainsResponse {
 //     }
 // }
 
+#[derive(defmt::Format)]
+pub struct TrainCar(u8);
+
+impl From<TrainCar> for u8 {
+    fn from(value: TrainCar) -> Self {
+        value.0
+    }
+}
+
+impl TrainCar {
+    pub fn to_string(&self) -> String<1> {
+        let mut s = String::<1>::new();
+        write!(s, "{}", self.0).expect("to_string should always succeed");
+        s
+    }
+}
+
+make_place!(TrainCarPlace);
+
+impl Deserialize for TrainCar {
+    fn begin(out: &mut Option<Self>) -> &mut dyn Visitor {
+        TrainCarPlace::new(out)
+    }
+}
+
+impl Visitor for TrainCarPlace<TrainCar> {
+    fn string(&mut self, s: &str) -> miniserde::Result<()> {
+        let value = s.parse::<u8>().map_err(|_| miniserde::Error)?;
+        self.out = Some(TrainCar(value));
+        Ok(())
+    }
+}
+
 #[derive(Deserialize)]
 pub struct Line {
     pub kind: LineKind,
@@ -121,6 +176,19 @@ pub enum Eta {
     Minutes(u8),
     Arriving, // ARR
     Boarding, // BRD
+}
+
+impl Eta {
+    pub fn to_string(&self) -> String<4> {
+        let mut s: String<4> = String::new();
+        match self {
+            Eta::Minutes(m) => write!(s, "{}m", m).expect("to_string should always succeed"),
+            Eta::Arriving => write!(s, "ARR").expect("to_string should always succeed"),
+            Eta::Boarding => write!(s, "BRD").expect("to_string should always succeed"),
+        };
+
+        s
+    }
 }
 
 make_place!(PlaceEta);
