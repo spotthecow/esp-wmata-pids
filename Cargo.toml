@@ -1,8 +1,8 @@
 [package]
-edition      = "2024"
-name         = "esp-wmata-pids"
+edition = "2024"
+name = "esp-wmata-pids"
 rust-version = "1.88"
-version      = "0.1.0"
+version = "0.1.0"
 
 [[bin]]
 name = "esp-wmata-pids"
@@ -19,7 +19,7 @@ esp-rtos = { version = "0.2.0", features = [
   "esp32",
 ] }
 
-defmt                  = "1.0.1"
+defmt = "1.0.1"
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32"] }
 
 embassy-net = { version = "0.7.1", features = [
@@ -28,7 +28,7 @@ embassy-net = { version = "0.7.1", features = [
   "medium-ethernet",
   "tcp",
   "udp",
-  "dns"
+  "dns",
 ] }
 embedded-io = { version = "0.7.1", features = ["defmt"] }
 embedded-io-async = { version = "0.7.0", features = ["defmt"] }
@@ -69,9 +69,9 @@ smoltcp = { version = "0.12.0", default-features = false, features = [
 trouble-host = { version = "0.5.0", features = ["gatt"] }
 
 critical-section = "1.2.0"
-static_cell      = "2.1.1"
-reqwless = {version = "0.13.0", features = ["defmt"]}
-miniserde = {version = "0.1.43", default-features = false}
+static_cell = "2.1.1"
+reqwless = { version = "0.13.0", features = ["defmt"] }
+miniserde = { version = "0.1.43", default-features = false }
 embedded-nal-async = "0.8.0"
 bitflags = "2.10.0"
 smallvec = "1.15.1"
@@ -82,19 +82,19 @@ heapless = "0.9.2"
 # cargo doesnt let us set release as the default profile
 # so we just make debug behave like release
 [profile.dev]
-codegen-units    = 1     # LLVM can perform better optimizations using a single thread
-debug            = 2
+codegen-units = 1        # LLVM can perform better optimizations using a single thread
+debug = 2
 debug-assertions = false
-incremental      = false
-lto              = 'fat'
-opt-level        = 's'
-overflow-checks  = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
 
 [profile.release]
-codegen-units    = 1     # LLVM can perform better optimizations using a single thread
-debug            = 2
+codegen-units = 1        # LLVM can perform better optimizations using a single thread
+debug = 2
 debug-assertions = false
-incremental      = false
-lto              = 'fat'
-opt-level        = 's'
-overflow-checks  = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false
