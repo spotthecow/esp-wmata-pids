@@ -6,7 +6,7 @@
     holding buffers for the duration of a data transfer."
 )]
 
-use defmt::{debug, error, info, trace};
+use defmt::{debug, error, info, trace, warn};
 use embassy_executor::{Spawner, task};
 use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
@@ -16,6 +16,7 @@ use esp_hal::clock::CpuClock;
 use esp_hal::rng::Rng;
 use esp_hal::timer::timg::TimerGroup;
 use esp_radio::Controller;
+use esp_radio::wifi::WifiStaState;
 use esp_radio::{
     // ble::controller::BleConnector,
     wifi::{ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent},
@@ -96,7 +97,7 @@ async fn main(spawner: Spawner) -> ! {
     );
 
     spawner
-        .spawn(connection(wifi_controller, ssid, password))
+        .spawn(manage_connection(wifi_controller, ssid, password))
         .unwrap();
     spawner.spawn(net_task(runner)).unwrap();
 
@@ -122,23 +123,27 @@ async fn main(spawner: Spawner) -> ! {
     let mut client = Client::new(reqwless, rx_buf, api_key);
 
     loop {
-        let trains = client
-            .next_trains(esp_wmata_pids::wmata::types::Station::K04)
-            .await;
+        if stack.is_link_up() {
+            let trains = client
+                .next_trains(esp_wmata_pids::wmata::types::Station::K04)
+                .await;
 
-        match trains {
-            Ok(trains) => {
-                info!("\n\nUpdate: ");
+            match trains {
+                Ok(trains) => {
+                    info!("\n\nUpdate: ");
 
-                let mut format_str: String<48> = String::new();
-                for t in &trains {
-                    format_str.clear();
-                    t.write_debug_display(&mut format_str)
-                        .expect("couldn't write debug display");
-                    info!("{}", format_str);
+                    let mut format_str: String<48> = String::new();
+                    for t in &trains {
+                        format_str.clear();
+                        t.write_debug_display(&mut format_str)
+                            .expect("couldn't write debug display");
+                        info!("{}", format_str);
+                    }
                 }
+                Err(e) => error!("{:?}", e),
             }
-            Err(e) => error!("{:?}", e),
+        } else {
+            warn!("wifi stack was down when trying to fetch. retrying...")
         }
 
         Timer::after_secs(10).await;
@@ -146,53 +151,50 @@ async fn main(spawner: Spawner) -> ! {
 }
 
 #[task]
-async fn connection(
+async fn manage_connection(
     mut controller: WifiController<'static>,
     ssid: &'static str,
     password: &'static str,
 ) {
-    debug!("starting connection task");
-    debug!("device capabilities: {:?}", controller.capabilities());
+    debug!("starting manage_connection task");
+    trace!("device capabilities: {:?}", controller.capabilities());
 
+    // loop forever, keeping the controller started and the connection up
     loop {
-        if esp_radio::wifi::sta_state() == esp_radio::wifi::WifiStaState::Connected {
-            // wait for disconnect
-            controller.wait_for_event(WifiEvent::StaDisconnected).await;
-            Timer::after_millis(500).await;
-        }
+        let state = esp_radio::wifi::sta_state();
 
-        // set config
-        if !matches!(controller.is_started(), Ok(true)) {
-            let client_config = ModeConfig::Client(
-                ClientConfig::default()
-                    .with_ssid(ssid.into())
-                    .with_password(password.into()),
-            );
+        if state != WifiStaState::Connected {
+            // configure and start the controller if it is not started
+            if !matches!(controller.is_started(), Ok(true)) {
+                let client_config = ModeConfig::Client(
+                    ClientConfig::default()
+                        .with_ssid(ssid.into())
+                        .with_password(password.into()),
+                );
 
-            controller
-                .set_config(&client_config)
-                .expect("couldn't set wifi controller config");
+                controller
+                    .set_config(&client_config)
+                    .expect("couldn't set wifi controller config");
 
-            debug!("starting wifi");
-            controller
-                .start_async()
-                .await
-                .expect("couldn't start wifi controller");
-            info!("wifi started");
+                controller
+                    .start_async()
+                    .await
+                    .expect("couldn't start wifi controller");
+                info!("wifi controller started");
 
-            debug!("scanning...");
-            let scan_config = ScanConfig::default().with_max(10);
-            let access_points = controller
-                .scan_with_config_async(scan_config)
-                .await
-                .expect("error scanning wifi");
+                // debug!("scanning...");
+                // let scan_config = ScanConfig::default().with_max(10);
+                // let access_points = controller
+                //     .scan_with_config_async(scan_config)
+                //     .await
+                //     .expect("error scanning wifi");
 
-            for ap in access_points {
-                trace!("{:?}", ap);
+                // for ap in access_points {
+                //     trace!("{:?}", ap);
+                // }
             }
 
-            debug!("About to connect...");
-
+            // controller should be started but not connected here, so let's connect
             match controller.connect_async().await {
                 Ok(_) => info!("Wifi connected!"),
                 Err(e) => {
@@ -201,6 +203,9 @@ async fn connection(
                 }
             }
         }
+
+        // controller should be started and connected here, so just sleep before looping
+        Timer::after_secs(5).await;
     }
 }
 
