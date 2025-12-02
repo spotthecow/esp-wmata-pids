@@ -2,7 +2,8 @@
 runner = "espflash flash --monitor --chip esp32 --baud 230400 --log-format defmt"
 
 [env]
-# DEFMT_LOG="info"
+# DEFMT_LOG = "info"
+# DEFMT_LOG = "debug"
 DEFMT_LOG = "info,esp_wmata_pids=debug"
 
 [build]
