@@ -9,9 +9,13 @@ name = "esp-wmata-pids"
 path = "./src/bin/main.rs"
 
 [dependencies]
-esp-hal = { version = "1.0.0", features = ["defmt", "esp32", "unstable"] }
+esp-hal = { git = "https://github.com/esp-rs/esp-hal/", package = "esp-hal", rev = "4ee9a976a8b233e28407d0b59ce0c954f069647b", features = [
+  "defmt",
+  "esp32",
+  "unstable",
+] }
 
-esp-rtos = { version = "0.2.0", features = [
+esp-rtos = { git = "https://github.com/esp-rs/esp-hal/", package = "esp-rtos", rev = "4ee9a976a8b233e28407d0b59ce0c954f069647b", features = [
   "defmt",
   "embassy",
   "esp-alloc",
@@ -20,7 +24,10 @@ esp-rtos = { version = "0.2.0", features = [
 ] }
 
 defmt = "1.0.1"
-esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32"] }
+esp-bootloader-esp-idf = { git = "https://github.com/esp-rs/esp-hal/", package = "esp-bootloader-esp-idf", rev = "4ee9a976a8b233e28407d0b59ce0c954f069647b", features = [
+  "defmt",
+  "esp32",
+] }
 
 embassy-net = { version = "0.7.1", features = [
   "defmt",
@@ -32,18 +39,19 @@ embassy-net = { version = "0.7.1", features = [
 ] }
 embedded-io = { version = "0.7.1", features = ["defmt"] }
 embedded-io-async = { version = "0.7.0", features = ["defmt"] }
-esp-alloc = { version = "0.9.0", features = ["defmt"] }
-esp-backtrace = { version = "0.18.1", features = [
+esp-alloc = { git = "https://github.com/esp-rs/esp-hal/", package = "esp-alloc", rev = "4ee9a976a8b233e28407d0b59ce0c954f069647b", features = [
+  "defmt",
+] }
+esp-backtrace = { git = "https://github.com/esp-rs/esp-hal/", package = "esp-backtrace", rev = "4ee9a976a8b233e28407d0b59ce0c954f069647b", features = [
   "defmt",
   "esp32",
   "panic-handler",
 ] }
-esp-println = { version = "0.16.1", features = ["defmt-espflash", "esp32"] }
-# for more networking protocol support see https://crates.io/crates/edge-net
-bt-hci = "0.6.0"
-embassy-executor = { version = "0.9.1", features = ["defmt"] }
-embassy-time = { version = "0.5.0", features = ["defmt"] }
-esp-radio = { version = "0.17.0", features = [
+esp-println = { git = "https://github.com/esp-rs/esp-hal/", package = "esp-println", rev = "4ee9a976a8b233e28407d0b59ce0c954f069647b", features = [
+  "defmt-espflash",
+  "esp32",
+] }
+esp-radio = { git = "https://github.com/esp-rs/esp-hal/", package = "esp-radio", rev = "4ee9a976a8b233e28407d0b59ce0c954f069647b", features = [
   # "ble",
   # "coex",
   "defmt",
@@ -53,6 +61,10 @@ esp-radio = { version = "0.17.0", features = [
   "unstable",
   "wifi",
 ] }
+bt-hci = "0.6.0"
+# for more networking protocol support see https://crates.io/crates/edge-net
+embassy-executor = { version = "0.9.1", features = ["defmt"] }
+embassy-time = { version = "0.5.0", features = ["defmt"] }
 smoltcp = { version = "0.12.0", default-features = false, features = [
   "defmt",
   "medium-ethernet",

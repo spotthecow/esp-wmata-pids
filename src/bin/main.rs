@@ -11,16 +11,19 @@ use embassy_executor::{Spawner, task};
 use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_net::{Runner, StackResources};
+use embassy_time::Duration;
 use embassy_time::Timer;
 use esp_hal::clock::CpuClock;
+use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rng::Rng;
 use esp_hal::timer::timg::TimerGroup;
-use esp_radio::Controller;
-use esp_radio::wifi::event::{EventExt, StaDisconnected};
-use esp_radio::wifi::{WifiEvent, WifiStaState};
+
+use esp_radio::wifi::event::{EventExt, StationDisconnected};
+use esp_radio::wifi::sta::StationConfig;
+use esp_radio::wifi::{ScanConfig, WifiEvent, WifiStationState};
 use esp_radio::{
     // ble::controller::BleConnector,
-    wifi::{ClientConfig, ModeConfig, WifiController, WifiDevice},
+    wifi::{ModeConfig, WifiController, WifiDevice},
 };
 use esp_wmata_pids::wmata::Client;
 use heapless::String;
@@ -61,15 +64,10 @@ async fn main(spawner: Spawner) -> ! {
     esp_alloc::heap_allocator!(size: 64 * 1024);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0);
+    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
     info!("Embassy initialized!");
-
-    let esp_radio_ctrl = &*mk_static!(
-        Controller<'static>,
-        esp_radio::init().expect("Failed to initialize Wi-Fi/BLE controller")
-    );
-    info!("radio intialized");
 
     // let transport = BleConnector::new(&esp_radio_ctrl, peripherals.BT, Default::default()).unwrap();
     // let ble_controller = ExternalController::<_, 20>::new(transport);
@@ -78,12 +76,11 @@ async fn main(spawner: Spawner) -> ! {
     // let _ble_stack = trouble_host::new(ble_controller, &mut resources);
     // info!("bluetooth stack intialized");
 
-    let (wifi_controller, interfaces) =
-        esp_radio::wifi::new(esp_radio_ctrl, peripherals.WIFI, Default::default())
-            .expect("Failed to initialize Wi-Fi controller");
+    let (wifi_controller, interfaces) = esp_radio::wifi::new(peripherals.WIFI, Default::default())
+        .expect("Failed to initialize Wi-Fi controller");
     info!("wifi controller initialized");
 
-    let device = interfaces.sta;
+    let device = interfaces.station;
     let config = embassy_net::Config::dhcpv4(Default::default());
 
     let rng = Rng::new();
@@ -107,17 +104,17 @@ async fn main(spawner: Spawner) -> ! {
         Timer::after_millis(200).await;
     }
 
-    let mut ip = None;
-    while ip.is_none() {
-        if let Some(cfg) = stack.config_v4() {
-            ip = Some(cfg.address);
-            info!("assigned ip: {}", cfg.address);
+    loop {
+        if let Some(config) = stack.config_v4() {
+            println!("Got IP: {}", config.address);
+            break;
         }
-        Timer::after_millis(200).await;
+        Timer::after_millis(500).await;
     }
 
     let state = mk_static!(TcpClientState<1, 4096, 4096>, TcpClientState::<1, 4096, 4096>::new());
-    let tcp = TcpClient::new(stack, state);
+    let mut tcp = TcpClient::new(stack, state);
+    tcp.set_timeout(Some(Duration::from_secs(5)));
     let dns = DnsSocket::new(stack);
 
     let reqwless = HttpClient::new(&tcp, &dns);
@@ -148,7 +145,6 @@ async fn main(spawner: Spawner) -> ! {
             }
             Err(e) => error!("{:?}", e),
         }
-
         Timer::after_secs(10).await;
     }
 }
@@ -162,63 +158,44 @@ async fn manage_connection(
     debug!("starting manage_connection task");
     debug!("device capabilities: {:?}", controller.capabilities());
 
-    let client_config = ModeConfig::Client(
-        ClientConfig::default()
-            .with_ssid(ssid.into())
-            .with_password(password.into())
-            .with_scan_method(esp_radio::wifi::ScanMethod::AllChannels)
-            .with_failure_retry_cnt(10)
-            .with_channel_none()
-            .with_bssid_none(),
-    );
-
-    controller
-        .set_config(&client_config)
-        .expect("couldn't set wifi controller config");
-
-    // for the loop below, we sleep a short time each iteration.
-    // each iteration where we don't connect succesfully, increase the delay a little bit.
-    // num_iters without connection
-    let mut num_failures = 0u32;
-
     // loop forever, keeping the controller started and the connection up
     loop {
-        match esp_radio::wifi::sta_state() {
-            WifiStaState::Started => match controller.connect_async().await {
-                Ok(_) => info!("wifi connected"),
-                Err(e) => {
-                    error!("Failed to connect to wifi: {:?}", e);
-                    num_failures = num_failures.saturating_add(1);
-                }
-            },
-            WifiStaState::Connected => {
-                num_failures = 0;
-                controller.wait_for_event(WifiEvent::StaDisconnected).await;
-            }
-            WifiStaState::Disconnected => {
-                // the amount of trouble in getting a disconnected device to reconnect is not worth it
-                // im still convinced theres a bug in the esp-radio library, where once the controller
-                // fails to connect by reason `Err(Disconnected)` then it is permanently broken until
-                // the controller is restarted. i give up. just restart the whole controller every time
-                warn!("disconnected. restarting the wifi controller");
-                controller.disconnect_async().await.unwrap();
-                controller.stop_async().await.unwrap();
-                controller
-                    .set_config(&client_config)
-                    .expect("couldn't set wifi controller config");
-            }
-            WifiStaState::Stopped | WifiStaState::Invalid => match controller.start_async().await {
-                Ok(_) => info!("wifi controller started"),
-                Err(_) => error!("failed to start the wifi controller"),
-            },
-            _ => {
-                error!("Unknown wifi state");
+        if esp_radio::wifi::station_state() == WifiStationState::Connected {
+            // wait until we're no longer connected
+            controller
+                .wait_for_event(WifiEvent::StationDisconnected)
+                .await;
+            Timer::after_millis(5000).await;
+        }
+        if !matches!(controller.is_started(), Ok(true)) {
+            let station_config = ModeConfig::Station(
+                StationConfig::default()
+                    .with_ssid(ssid.into())
+                    .with_password(password.into()),
+            );
+            controller.set_config(&station_config).unwrap();
+            println!("Starting wifi");
+            controller.start_async().await.unwrap();
+            println!("Wifi started!");
+
+            println!("Scan");
+            let scan_config = ScanConfig::default().with_max(10);
+            let result = controller
+                .scan_with_config_async(scan_config)
+                .await
+                .unwrap();
+            for ap in result {
+                println!("{:?}", ap);
             }
         }
-        let delay_ms = reconnect_backoff_ms(num_failures);
-        if delay_ms > 0 {
-            warn!("too many connection attempts. sleeping for {}ms", delay_ms);
-            Timer::after_millis(reconnect_backoff_ms(num_failures)).await;
+        println!("About to connect...");
+
+        match controller.connect_async().await {
+            Ok(_) => println!("Wifi connected!"),
+            Err(e) => {
+                println!("Failed to connect to wifi: {:?}", e);
+                Timer::after_millis(5000).await
+            }
         }
     }
 }
@@ -228,17 +205,8 @@ async fn net_task(mut runner: Runner<'static, WifiDevice<'static>>) {
     runner.run().await
 }
 
-fn reconnect_backoff_ms(failures: u32) -> u64 {
-    const DELAY_MAX_MS: u64 = 10_000;
-
-    if failures < 3 {
-        return 0;
-    }
-
-    let step = 1u64 << (failures - 3); // 1, 2, 4, 8, ...
-    (500 * step).min(DELAY_MAX_MS)
-}
-
 fn init_wifi_handlers() {
-    StaDisconnected::update_handler(|event| debug!("EVENT: StaDisconnected - {}", event.reason()));
+    StationDisconnected::update_handler(|event| {
+        debug!("EVENT: StaDisconnected - {}", event.reason());
+    });
 }

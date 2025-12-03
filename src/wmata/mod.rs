@@ -15,8 +15,8 @@ use crate::wmata::{
     util::build_next_trains_url,
 };
 
-pub const USER_AGENT: &str = "esp-wmata-pids";
-pub const API: &str = "http://api.wmata.com";
+const USER_AGENT: &str = "esp-wmata-pids";
+const API: &str = "http://api.wmata.com";
 
 #[derive(Debug)]
 pub enum Error {
@@ -101,7 +101,11 @@ where
 
     /// Convenience function for making requests
     async fn fetch<J: Deserialize>(&mut self, url: &str) -> Result<J, Error> {
-        let headers = [("Api_key", self.api_key), ("User-Agent", "esp-wmata-pids")];
+        let headers = [
+            ("Api_key", self.api_key),
+            ("User-Agent", USER_AGENT),
+            ("Connection", "close"),
+        ];
         let mut req = self
             .reqwless
             .request(Method::GET, url)
