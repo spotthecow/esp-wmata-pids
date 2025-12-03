@@ -11,7 +11,6 @@ use embassy_executor::{Spawner, task};
 use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_net::{Runner, StackResources};
-use embassy_time::Duration;
 use embassy_time::Timer;
 use esp_hal::clock::CpuClock;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
@@ -20,11 +19,8 @@ use esp_hal::timer::timg::TimerGroup;
 
 use esp_radio::wifi::event::{EventExt, StationDisconnected};
 use esp_radio::wifi::sta::StationConfig;
+use esp_radio::wifi::{ModeConfig, WifiController, WifiDevice};
 use esp_radio::wifi::{ScanConfig, WifiEvent, WifiStationState};
-use esp_radio::{
-    // ble::controller::BleConnector,
-    wifi::{ModeConfig, WifiController, WifiDevice},
-};
 use esp_wmata_pids::wmata::Client;
 use heapless::String;
 use reqwless::client::HttpClient;
@@ -69,13 +65,6 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Embassy initialized!");
 
-    // let transport = BleConnector::new(&esp_radio_ctrl, peripherals.BT, Default::default()).unwrap();
-    // let ble_controller = ExternalController::<_, 20>::new(transport);
-    // let mut resources: HostResources<DefaultPacketPool, CONNECTIONS_MAX, L2CAP_CHANNELS_MAX> =
-    //     HostResources::new();
-    // let _ble_stack = trouble_host::new(ble_controller, &mut resources);
-    // info!("bluetooth stack intialized");
-
     let (wifi_controller, interfaces) = esp_radio::wifi::new(peripherals.WIFI, Default::default())
         .expect("Failed to initialize Wi-Fi controller");
     info!("wifi controller initialized");
@@ -114,7 +103,7 @@ async fn main(spawner: Spawner) -> ! {
 
     let state = mk_static!(TcpClientState<1, 4096, 4096>, TcpClientState::<1, 4096, 4096>::new());
     let mut tcp = TcpClient::new(stack, state);
-    tcp.set_timeout(Some(Duration::from_secs(5)));
+    tcp.set_timeout(Some(embassy_time::Duration::from_secs(5)));
     let dns = DnsSocket::new(stack);
 
     let reqwless = HttpClient::new(&tcp, &dns);
@@ -207,6 +196,6 @@ async fn net_task(mut runner: Runner<'static, WifiDevice<'static>>) {
 
 fn init_wifi_handlers() {
     StationDisconnected::update_handler(|event| {
-        debug!("EVENT: StaDisconnected - {}", event.reason());
+        debug!("EVENT: StationDisconnected - {}", event.reason());
     });
 }
