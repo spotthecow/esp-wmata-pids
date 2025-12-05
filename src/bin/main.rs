@@ -103,8 +103,13 @@ async fn main(spawner: Spawner) -> ! {
             .expect("config fields should fit");
     } else {
         info!("no valid config. loading environment variables");
+        ssid.clear();
         ssid.push_str(SSID.expect("SSID not set")).unwrap();
+
+        pass.clear();
         pass.push_str(PASSWORD.expect("PASSWORD not set")).unwrap();
+
+        api_key.clear();
         api_key.push_str(API_KEY.expect("API_KEY not set")).unwrap();
 
         let cfg = Config::new(ssid.as_str(), pass.as_str(), api_key.as_str()).unwrap();
