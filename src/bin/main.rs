@@ -21,6 +21,8 @@ use esp_radio::wifi::event::{EventExt, StationDisconnected};
 use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{ModeConfig, WifiController, WifiDevice};
 use esp_radio::wifi::{ScanConfig, WifiEvent, WifiStationState};
+use esp_storage::FlashStorage;
+use esp_wmata_pids::config::WmataConfig;
 use esp_wmata_pids::wmata::Client;
 use heapless::String;
 use reqwless::client::HttpClient;
@@ -46,12 +48,6 @@ const API_KEY: Option<&str> = option_env!("API_KEY");
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    // unwrap env so we can panic early
-    let ssid = SSID.expect("environment variables must be set during compilation: SSID");
-    let password =
-        PASSWORD.expect("environment variables must be set during compilation: PASSWORD");
-    let api_key = API_KEY.expect("environment variables must be set during compilation: API_KEY");
-
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
@@ -83,11 +79,43 @@ async fn main(spawner: Spawner) -> ! {
         seed,
     );
 
+    init_wifi_handlers();
+
+    let mut flash = FlashStorage::new(peripherals.FLASH);
+
+    let ssid = mk_static!(String<32>, String::<32>::new());
+    let pass = mk_static!(String<64>, String::<64>::new());
+    let api_key = mk_static!(String<32>, String::<32>::new());
+
+    let wmata_cfg = WmataConfig::load(&mut flash);
+
+    if let Ok(cfg) = wmata_cfg {
+        info!("found a config:\n{:?}\n", cfg);
+        *ssid = cfg.ssid;
+        *pass = cfg.pass;
+        *api_key = cfg.api_key;
+    } else {
+        info!("no valid config. loading environment variables");
+        ssid.push_str(SSID.expect("SSID not set")).unwrap();
+        pass.push_str(PASSWORD.expect("PASSWORD not set")).unwrap();
+        api_key.push_str(API_KEY.expect("API_KEY not set")).unwrap();
+
+        let cfg = WmataConfig::new(ssid.as_str(), pass.as_str(), api_key.as_str()).unwrap();
+        if let Err(e) = cfg.save(&mut flash) {
+            error!("flash error: {}", e);
+        } else {
+            info!("saved config:\n{:?}\n", cfg);
+        }
+    }
+
     spawner
-        .spawn(manage_connection(wifi_controller, ssid, password))
+        .spawn(manage_station(
+            wifi_controller,
+            ssid.as_str(),
+            pass.as_str(),
+        ))
         .unwrap();
     spawner.spawn(net_task(runner)).unwrap();
-    init_wifi_handlers();
 
     while !stack.is_link_up() {
         Timer::after_millis(200).await;
@@ -139,7 +167,7 @@ async fn main(spawner: Spawner) -> ! {
 }
 
 #[task]
-async fn manage_connection(
+async fn manage_station(
     mut controller: WifiController<'static>,
     ssid: &'static str,
     password: &'static str,
