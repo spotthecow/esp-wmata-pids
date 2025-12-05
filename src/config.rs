@@ -1,61 +1,86 @@
+use bincode::{
+    Decode, Encode, decode_from_slice, encode_into_slice,
+    error::{DecodeError, EncodeError},
+};
 use embedded_storage::{ReadStorage, Storage};
 use esp_storage::{FlashStorage, FlashStorageError};
-use heapless::String;
 use thiserror::Error;
 
-pub const LEN: usize = core::mem::size_of::<WmataConfig>(); // 136
+pub const CHECKSUM_SZ: usize = core::mem::size_of::<u32>();
+pub const SSID_MAX_LEN: usize = 32;
+pub const PASS_MAX_LEN: usize = 64;
+pub const API_KEY_MAX_LEN: usize = 32;
+pub const CONFIG_SZ: usize = core::mem::size_of::<Config>() + CHECKSUM_SZ; // 132 + 4 = 136
 
 #[derive(Error, Debug)]
-pub enum WmataConfigError {
-    #[error("Buffer must be at least length: {}", LEN)]
+pub enum ConfigError {
+    #[error("Buffer must be at least length: {}", CONFIG_SZ)]
     BufferTooSmall,
     #[error("Crc checksum failed")]
     BadChecksum,
     #[error("one or more args were too long")]
     BadArgs,
-    #[error("Strings must be valid UTF-8")]
-    Utf8(#[from] core::str::Utf8Error),
     #[error("flash error: {0:?}")]
     Flash(FlashStorageError),
+    #[error("decode error: {0:?}")]
+    Decode(DecodeError),
+    #[error("encode error: {0:?}")]
+    Encode(EncodeError),
 }
 
-impl From<FlashStorageError> for WmataConfigError {
+impl defmt::Format for ConfigError {
+    fn format(&self, fmt: defmt::Formatter) {
+        defmt::write!(fmt, "{}", defmt::Display2Format(self))
+    }
+}
+
+impl From<FlashStorageError> for ConfigError {
     fn from(e: FlashStorageError) -> Self {
         Self::Flash(e)
     }
 }
 
-#[derive(defmt::Format)]
-#[repr(C)]
-pub struct WmataConfig {
-    pub version: u8,
+impl From<DecodeError> for ConfigError {
+    fn from(e: DecodeError) -> Self {
+        Self::Decode(e)
+    }
+}
+
+impl From<EncodeError> for ConfigError {
+    fn from(e: EncodeError) -> Self {
+        Self::Encode(e)
+    }
+}
+
+#[derive(defmt::Format, Encode, Decode)]
+pub struct Config {
+    version: u8,
     ssid_len: u8,
     pass_len: u8,
     api_key_len: u8,
-    pub ssid: String<32>,
-    pub pass: String<64>,
-    pub api_key: String<32>,
-    crc: Option<u32>,
+    ssid: [u8; SSID_MAX_LEN],
+    pass: [u8; PASS_MAX_LEN],
+    api_key: [u8; API_KEY_MAX_LEN],
 }
 
-impl WmataConfig {
-    pub fn new(ssid: &str, pass: &str, api_key: &str) -> Result<Self, WmataConfigError> {
+impl Config {
+    pub fn new(ssid: &str, pass: &str, api_key: &str) -> Result<Self, ConfigError> {
         let ssid_len = ssid.len();
         let pass_len = pass.len();
         let api_key_len = api_key.len();
 
-        if ssid_len > 32 || pass_len > 64 || api_key_len > 32 {
-            return Err(WmataConfigError::BadArgs);
+        if ssid_len > SSID_MAX_LEN || pass_len > PASS_MAX_LEN || api_key_len > API_KEY_MAX_LEN {
+            return Err(ConfigError::BadArgs);
         }
 
-        let mut new_ssid: String<32> = String::new();
-        new_ssid.push_str(ssid).unwrap();
+        let mut new_ssid = [0u8; SSID_MAX_LEN];
+        new_ssid[..ssid_len].copy_from_slice(ssid.as_bytes());
 
-        let mut new_pass: String<64> = String::new();
-        new_pass.push_str(pass).unwrap();
+        let mut new_pass = [0u8; PASS_MAX_LEN];
+        new_pass[..pass_len].copy_from_slice(pass.as_bytes());
 
-        let mut new_api_key: String<32> = String::new();
-        new_api_key.push_str(api_key).unwrap();
+        let mut new_api_key = [0u8; API_KEY_MAX_LEN];
+        new_api_key[..api_key_len].copy_from_slice(api_key.as_bytes());
 
         Ok(Self {
             version: 1,
@@ -65,154 +90,84 @@ impl WmataConfig {
             ssid: new_ssid,
             pass: new_pass,
             api_key: new_api_key,
-            crc: None,
         })
     }
 
-    fn to_bytes(&self, bytes: &mut [u8]) -> Result<(), WmataConfigError> {
-        if bytes.len() < LEN {
-            return Err(WmataConfigError::BufferTooSmall);
+    /// Encode self using `bincode`, prepending with a crc32 checksum, and storing in `buffer`.
+    /// # Returns
+    /// Number of bytes written to `buffer` (including checksum)
+    fn to_bytes(&self, buffer: &mut [u8]) -> Result<usize, ConfigError> {
+        if buffer.len() < CONFIG_SZ {
+            return Err(ConfigError::BufferTooSmall);
         }
 
-        bytes.fill(0);
-        {
-            let (version_slice, rest) = bytes
-                .split_first_mut()
-                .ok_or(WmataConfigError::BufferTooSmall)?;
-            *version_slice = self.version;
+        let (crc32_bytes, payload) = buffer.split_at_mut(CHECKSUM_SZ);
+        let len = encode_into_slice(
+            self,
+            payload,
+            bincode::config::standard().with_fixed_int_encoding(),
+        )?;
+        let crc32 = crc32fast::hash(&payload[..len]);
+        crc32_bytes.copy_from_slice(&crc32.to_le_bytes());
 
-            let (ssid_len_slice, rest) = rest
-                .split_first_mut()
-                .ok_or(WmataConfigError::BufferTooSmall)?;
-            *ssid_len_slice = self.ssid_len;
-
-            let (pass_len_slice, rest) = rest
-                .split_first_mut()
-                .ok_or(WmataConfigError::BufferTooSmall)?;
-            *pass_len_slice = self.pass_len;
-
-            let (api_key_len_slice, rest) = rest
-                .split_first_mut()
-                .ok_or(WmataConfigError::BufferTooSmall)?;
-            *api_key_len_slice = self.api_key_len;
-
-            let (ssid_slice, rest) = rest
-                .split_first_chunk_mut::<32>()
-                .ok_or(WmataConfigError::BufferTooSmall)?;
-            //TODO: this panics because self.ssid.as_bytes() returns only the used portion of the string, so there may be a length mismatch
-            ssid_slice.copy_from_slice(self.ssid.as_bytes());
-
-            let (pass_slice, rest) = rest
-                .split_first_chunk_mut::<64>()
-                .ok_or(WmataConfigError::BufferTooSmall)?;
-            pass_slice.copy_from_slice(self.pass.as_bytes());
-
-            let (api_key_slice, rest) = rest
-                .split_first_chunk_mut::<32>()
-                .ok_or(WmataConfigError::BufferTooSmall)?;
-            api_key_slice.copy_from_slice(self.api_key.as_bytes());
-
-            // this block makes sure we have 4 bytes left for crc
-            let (_crc_slice, _rest) = rest
-                .split_first_chunk_mut::<4>()
-                .ok_or(WmataConfigError::BufferTooSmall)?;
-        }
-        let crc = crc32fast::hash(&bytes[..LEN - 4]); // crc.len() = 4
-        bytes[LEN - 4..LEN].copy_from_slice(&crc.to_le_bytes());
-
-        Ok(())
+        Ok(CHECKSUM_SZ + len)
     }
 
-    fn from_bytes(bytes: &mut [u8]) -> Result<Self, WmataConfigError> {
-        let (version_slice, rest) = bytes
-            .split_first_mut()
-            .ok_or(WmataConfigError::BufferTooSmall)?;
-        let version = *version_slice;
-
-        let (ssid_len_slice, rest) = rest
-            .split_first_mut()
-            .ok_or(WmataConfigError::BufferTooSmall)?;
-        let ssid_len = *ssid_len_slice;
-
-        let (pass_len_slice, rest) = rest
-            .split_first_mut()
-            .ok_or(WmataConfigError::BufferTooSmall)?;
-        let pass_len = *pass_len_slice;
-
-        let (api_key_len_slice, rest) = rest
-            .split_first_mut()
-            .ok_or(WmataConfigError::BufferTooSmall)?;
-        let api_key_len = *api_key_len_slice;
-
-        let (ssid_slice, rest) = rest
-            .split_first_chunk_mut::<32>()
-            .ok_or(WmataConfigError::BufferTooSmall)?;
-        let mut ssid: String<32> = String::new();
-        ssid.push_str(core::str::from_utf8(ssid_slice)?).unwrap();
-
-        let (pass_slice, rest) = rest
-            .split_first_chunk_mut::<64>()
-            .ok_or(WmataConfigError::BufferTooSmall)?;
-        let mut pass: String<64> = String::new();
-        pass.push_str(core::str::from_utf8(pass_slice)?).unwrap();
-
-        let (api_key_slice, rest) = rest
-            .split_first_chunk_mut::<32>()
-            .ok_or(WmataConfigError::BufferTooSmall)?;
-        let mut api_key: String<32> = String::new();
-        api_key
-            .push_str(core::str::from_utf8(api_key_slice)?)
-            .unwrap();
-
-        let (crc_slice, _rest) = rest
-            .split_first_chunk_mut::<4>()
-            .ok_or(WmataConfigError::BufferTooSmall)?;
-        let crc = u32::from_le_bytes(*crc_slice);
-
-        if crc32fast::hash(&bytes[..LEN - 4]) != crc {
-            return Err(WmataConfigError::BadChecksum);
+    fn from_bytes(bytes: &[u8]) -> Result<Self, ConfigError> {
+        if bytes.len() < CONFIG_SZ {
+            return Err(ConfigError::BufferTooSmall);
         }
 
-        let config = Self {
-            version,
-            ssid_len,
-            pass_len,
-            api_key_len,
-            ssid,
-            pass,
-            api_key,
-            crc: Some(crc),
-        };
+        let (crc32_bytes, payload) = bytes.split_at(CHECKSUM_SZ);
+        let crc32 = u32::from_le_bytes(crc32_bytes.try_into().unwrap()); // this _should_ be infallible
 
-        Ok(config)
+        if crc32 == crc32fast::hash(payload) {
+            Ok(decode_from_slice(
+                payload,
+                bincode::config::standard().with_fixed_int_encoding(),
+            )?
+            .0)
+        } else {
+            Err(ConfigError::BadChecksum)
+        }
     }
+
+    pub fn version(&self) -> u8 {
+        self.version
+    }
+
+    // the following few string accessors just unwrap because they should be valid utf8, since they were passed in as &str originially.
+    // unwrap here for simpler call site
 
     pub fn ssid(&self) -> &str {
-        self.ssid.as_str()
+        let len = self.ssid_len as usize;
+        core::str::from_utf8(&self.ssid[..len]).unwrap()
     }
 
     pub fn pass(&self) -> &str {
-        self.pass.as_str()
+        let len = self.pass_len as usize;
+        core::str::from_utf8(&self.pass[..len]).unwrap()
     }
 
     pub fn api_key(&self) -> &str {
-        self.api_key.as_str()
+        let len = self.api_key_len as usize;
+        core::str::from_utf8(&self.api_key[..len]).unwrap()
     }
 
-    pub fn save(&self, flash: &mut FlashStorage) -> Result<(), FlashStorageError> {
-        let mut bytes = [0u8; LEN];
-        self.to_bytes(&mut bytes).unwrap();
+    pub fn save(&self, flash: &mut FlashStorage) -> Result<(), ConfigError> {
+        let mut bytes = [0u8; CONFIG_SZ];
+        self.to_bytes(&mut bytes)?;
         let offset = flash.capacity() as u32 - FlashStorage::SECTOR_SIZE;
         flash.write(offset, &bytes)?;
 
         Ok(())
     }
 
-    pub fn load(flash: &mut FlashStorage) -> Result<Self, WmataConfigError> {
-        let mut bytes = [0u8; LEN];
+    pub fn load(flash: &mut FlashStorage) -> Result<Self, ConfigError> {
+        let mut bytes = [0u8; CONFIG_SZ];
         let offset = flash.capacity() as u32 - FlashStorage::SECTOR_SIZE;
         flash.read(offset, &mut bytes)?;
 
-        Self::from_bytes(&mut bytes)
+        Self::from_bytes(&bytes)
     }
 }

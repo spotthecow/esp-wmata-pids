@@ -22,7 +22,7 @@ use esp_radio::wifi::sta::StationConfig;
 use esp_radio::wifi::{ModeConfig, WifiController, WifiDevice};
 use esp_radio::wifi::{ScanConfig, WifiEvent, WifiStationState};
 use esp_storage::FlashStorage;
-use esp_wmata_pids::config::WmataConfig;
+use esp_wmata_pids::config::Config;
 use esp_wmata_pids::wmata::Client;
 use heapless::String;
 use reqwless::client::HttpClient;
@@ -87,20 +87,27 @@ async fn main(spawner: Spawner) -> ! {
     let pass = mk_static!(String<64>, String::<64>::new());
     let api_key = mk_static!(String<32>, String::<32>::new());
 
-    let wmata_cfg = WmataConfig::load(&mut flash);
+    let wmata_cfg = Config::load(&mut flash);
 
     if let Ok(cfg) = wmata_cfg {
         info!("found a config:\n{:?}\n", cfg);
-        *ssid = cfg.ssid;
-        *pass = cfg.pass;
-        *api_key = cfg.api_key;
+        ssid.clear();
+        ssid.push_str(cfg.ssid()).expect("config fields should fit");
+
+        pass.clear();
+        pass.push_str(cfg.pass()).expect("config fields should fit");
+
+        api_key.clear();
+        api_key
+            .push_str(cfg.api_key())
+            .expect("config fields should fit");
     } else {
         info!("no valid config. loading environment variables");
         ssid.push_str(SSID.expect("SSID not set")).unwrap();
         pass.push_str(PASSWORD.expect("PASSWORD not set")).unwrap();
         api_key.push_str(API_KEY.expect("API_KEY not set")).unwrap();
 
-        let cfg = WmataConfig::new(ssid.as_str(), pass.as_str(), api_key.as_str()).unwrap();
+        let cfg = Config::new(ssid.as_str(), pass.as_str(), api_key.as_str()).unwrap();
         if let Err(e) = cfg.save(&mut flash) {
             error!("flash error: {}", e);
         } else {
