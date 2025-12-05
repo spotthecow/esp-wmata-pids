@@ -61,8 +61,10 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Embassy initialized!");
 
-    let (wifi_controller, interfaces) = esp_radio::wifi::new(peripherals.WIFI, Default::default())
-        .expect("Failed to initialize Wi-Fi controller");
+    let (wifi_controller, interfaces) = unwrap!(
+        esp_radio::wifi::new(peripherals.WIFI, Default::default()),
+        "Failed to initialize Wi-Fi controller"
+    );
     info!("wifi controller initialized");
 
     let device = interfaces.station;
@@ -92,25 +94,32 @@ async fn main(spawner: Spawner) -> ! {
     if let Ok(cfg) = wmata_cfg {
         info!("found a config:\n{:?}\n", cfg);
         ssid.clear();
-        ssid.push_str(cfg.ssid()).expect("config fields should fit");
+        ssid.push_str(cfg.ssid()).unwrap();
 
         pass.clear();
-        pass.push_str(cfg.pass()).expect("config fields should fit");
+        pass.push_str(cfg.pass()).unwrap();
 
         api_key.clear();
-        api_key
-            .push_str(cfg.api_key())
-            .expect("config fields should fit");
+        api_key.push_str(cfg.api_key()).unwrap();
     } else {
         info!("no valid config. loading environment variables");
         ssid.clear();
-        ssid.push_str(SSID.expect("SSID not set")).unwrap();
+        unwrap!(
+            ssid.push_str(unwrap!(SSID, "SSID not set")),
+            "SSID too long"
+        );
 
         pass.clear();
-        pass.push_str(PASSWORD.expect("PASSWORD not set")).unwrap();
+        unwrap!(
+            pass.push_str(unwrap!(PASSWORD, "PASSWORD not set")),
+            "PASSWORD too long"
+        );
 
         api_key.clear();
-        api_key.push_str(API_KEY.expect("API_KEY not set")).unwrap();
+        unwrap!(
+            api_key.push_str(unwrap!(API_KEY, "API_KEY not set")),
+            "API_KEY too long"
+        );
 
         let cfg = Config::new(ssid.as_str(), pass.as_str(), api_key.as_str()).unwrap();
         if let Err(e) = cfg.save(&mut flash) {
@@ -120,14 +129,15 @@ async fn main(spawner: Spawner) -> ! {
         }
     }
 
-    spawner
-        .spawn(manage_station(
+    unwrap!(
+        spawner.spawn(manage_station(
             wifi_controller,
             ssid.as_str(),
             pass.as_str(),
-        ))
-        .unwrap();
-    spawner.spawn(net_task(runner)).unwrap();
+        )),
+        "failed to spawn task"
+    );
+    unwrap!(spawner.spawn(net_task(runner)), "failed to spawn task");
 
     while !stack.is_link_up() {
         Timer::after_millis(200).await;
