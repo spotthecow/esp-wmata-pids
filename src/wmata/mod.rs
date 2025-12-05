@@ -1,5 +1,8 @@
+mod config;
 pub mod types;
 mod util;
+
+pub use crate::wmata::config::Config;
 
 use defmt::debug;
 use embedded_nal_async::{Dns, TcpConnect};
