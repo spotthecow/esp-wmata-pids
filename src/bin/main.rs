@@ -172,14 +172,14 @@ async fn main(spawner: Spawner) -> ! {
 
         match trains {
             Ok(trains) => {
-                info!("\n\nUpdate: ");
+                println!("\nUpdate: ");
 
                 let mut format_str: String<48> = String::new();
                 for t in &trains {
                     format_str.clear();
                     t.write_debug_display(&mut format_str)
                         .expect("couldn't write debug display");
-                    info!("{}", format_str);
+                    println!("{}", format_str);
                 }
             }
             Err(e) => error!("{:?}", e),

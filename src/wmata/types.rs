@@ -5,7 +5,7 @@ use miniserde::{Deserialize, de::Visitor, make_place};
 #[derive(Deserialize, defmt::Format)]
 pub struct NextTrain {
     #[serde(rename = "Car")]
-    pub cars: TrainCar,
+    pub cars: Option<TrainCar>,
     #[serde(rename = "Destination")]
     pub destination: StationName,
     #[serde(rename = "DestinationCode")]
@@ -19,7 +19,7 @@ pub struct NextTrain {
     #[serde(rename = "LocationName")]
     pub location_name: StationName,
     #[serde(rename = "Min")]
-    pub min: Eta,
+    pub min: Option<Eta>,
 }
 
 impl NextTrain {
@@ -30,13 +30,15 @@ impl NextTrain {
             write!(buf, "[  ] ")?;
         }
 
-        write!(
-            buf,
-            "({}) {} - {}",
-            self.cars.to_string(),
-            self.destination.0,
-            self.min.to_string()
-        )?;
+        if let Some(cars) = &self.cars {
+            write!(buf, "({}) ", cars.to_string())?;
+        }
+
+        write!(buf, "{} ", self.destination.0)?;
+
+        if let Some(min) = &self.min {
+            write!(buf, "- {}", min.to_string())?;
+        }
 
         Ok(())
     }
@@ -145,6 +147,7 @@ pub enum LineKind {
     RD,
     OR,
     YL,
+    NO,
 }
 
 impl LineKind {
@@ -156,6 +159,7 @@ impl LineKind {
             LineKind::RD => "red",
             LineKind::OR => "orange",
             LineKind::YL => "yellow",
+            LineKind::NO => "no passengers",
         }
     }
 
@@ -167,6 +171,7 @@ impl LineKind {
             LineKind::RD => "RD",
             LineKind::OR => "OR",
             LineKind::YL => "YL",
+            LineKind::NO => "NO",
         }
     }
 }
